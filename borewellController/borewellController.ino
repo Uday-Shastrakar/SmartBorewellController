@@ -55,11 +55,6 @@ bool relayOffCountdown = false;
 bool motorCheckInProgress = false;
 unsigned long motorCheckStart = 0;
 
-unsigned long lastOptoGFChange = 0, lastOptoFFChange = 0, lastOptoMotorChange = 0;
-bool stableACGF = false, stableACFF = false, stableMotor = false;
-bool lastGFRead = false, lastFFRead = false, lastMotorRead = false;
-const unsigned long debounceTime = 50;
-
 unsigned long lastAlertToggle = 0;
 bool alertState = false;
 
@@ -88,8 +83,8 @@ struct BuzzerTask {
   int beepsDone = 0;
 } buzzer;
 
-// ======================= Prototypes =======================
-bool debounceOpto(int pin, bool &lastRead, unsigned long &lastChange, bool &stableState);
+// ======================= Function Prototypes =======================
+bool readOptoAC(int pin);
 void handleBuzzer();
 void startBuzzer(int durationMs, int beepCount, int frequency = 1000);
 void activateEmergencyStop();
@@ -157,14 +152,10 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  if (emergencyStopActive) {
-    handleButtons(); // still allow emergency stop / buttons to be read
-    return;
-  }
-
-  bool acGF = debounceOpto(optoGF, lastGFRead, lastOptoGFChange, stableACGF);
-  bool acFF = debounceOpto(optoFF, lastFFRead, lastOptoFFChange, stableACFF);
-  bool motorOptoState = debounceOpto(optoMotor, lastMotorRead, lastOptoMotorChange, stableMotor);
+  // ================= AC Detection =================
+  bool acGF = readOptoAC(optoGF);
+  bool acFF = readOptoAC(optoFF);
+  bool motorOptoState = readOptoAC(optoMotor);
 
   handleButtons();
   handleBuzzer();
@@ -173,6 +164,17 @@ void loop() {
   // indicator LEDs for AC presence
   digitalWrite(yellowLED, acGF ? HIGH : LOW);
   digitalWrite(blueLED, acFF ? HIGH : LOW);
+
+  // Emergency active: only reset when both powers are OFF
+  if (emergencyStopActive) {
+    if (!acGF && !acFF) {
+      Serial.println("Both powers OFF. Emergency reset.");
+      emergencyStopActive = false;
+      alertBuzzerTriggered = false;
+      digitalWrite(redLED, LOW);
+    }
+    return; // skip rest of loop while emergency
+  }
 
   // No AC power at all -> reset everything
   if (!acGF && !acFF) {
@@ -185,7 +187,6 @@ void loop() {
     alertBuzzer();
     return;
   } else {
-    // clear alert tone when not in alert state
     if (!alertBuzzerTriggered) {
       digitalWrite(redLED, LOW);
       noTone(buzzerPin);
@@ -196,35 +197,25 @@ void loop() {
   confirmPower(now, acGF, acFF);
 
   // --- Relay Decision ---
-  // Desired relays are determined by selected timer and AC presence.
-  // We require powerConfirmed to energize relays (avoid flicker).
   bool desiredRelayGF = HIGH;
   bool desiredRelayFF = HIGH;
 
-  // If timer is set and running OR not running but user selected timer via buttons (we use timerDuration)
-  // We only energize the relay corresponding to the available AC source (exclusive logic: GF xor FF)
   if (powerConfirmed && !relayOffCountdown) {
-    // prefer GF if GF present and FF absent
     if (acGF && !acFF) desiredRelayGF = LOW;
-    // prefer FF if FF present and GF absent
     else if (!acGF && acFF) desiredRelayFF = LOW;
-    // If only one source present, that relay will be LOW
-    // If neither exclusive condition matches (e.g. both absent or both present), both remain HIGH
   }
 
-  // Relay hold logic: when a relay decision changes from OFF->ON, we set relayIsOn and timestamp
+  // Relay hold logic
   if (!relayIsOn && (desiredRelayGF == LOW || desiredRelayFF == LOW)) {
     relayOnStartTime = now;
     relayIsOn = true;
   }
 
-  // Apply relays with a minimal hold window to avoid rapid toggles
   if (relayIsOn) {
     if (now - relayOnStartTime < relayHoldTime) {
       digitalWrite(relayGF, desiredRelayGF);
       digitalWrite(relayFF, desiredRelayFF);
     } else {
-      // After hold window still apply desired (prevents flipping back quickly)
       digitalWrite(relayGF, desiredRelayGF);
       digitalWrite(relayFF, desiredRelayFF);
       if (desiredRelayGF == HIGH && desiredRelayFF == HIGH) relayIsOn = false;
@@ -234,13 +225,12 @@ void loop() {
     digitalWrite(relayFF, desiredRelayFF);
   }
 
-  // Motor safety check: if relay is ON but motor opto never sees motor voltage in 5s -> switch off and wait 20s
+  // Motor safety check
   handleMotorSafety(now, acGF, acFF, motorOptoState);
 
-  // Pump considered running only if relay is ON (either) AND motor opto reports motor powered
+  // Pump running logic
   pumpRunning = (digitalRead(relayGF) == LOW || digitalRead(relayFF) == LOW) && motorOptoState;
 
-  // When pump truly starts, start the timer and alert with a short beep
   if (pumpRunning && !pumpPreviouslyRunning) {
     timerStart = now;
     timerRunning = true;
@@ -249,32 +239,33 @@ void loop() {
   }
   pumpPreviouslyRunning = pumpRunning;
 
-  // Run timer logic (turns off pump when time expires)
+  // Run timer logic
   runPumpTimer();
 
-  // White LED pulse while pump runs
+  // White LED pulse
   if (pumpRunning) handleWhiteLEDPulse();
   else noPulseWhiteLED();
 
-  // Keep timer LED showing selected timer even while running
+  // Timer LED
   updateTimerLEDs(timerDuration);
 
-  // Serial debug/status
+  // Serial debug/status every 1 sec
   if (now - lastSerialUpdate >= serialInterval) {
     lastSerialUpdate = now;
     printStatus(now, acGF, acFF, motorOptoState, pumpRunning);
   }
 }
 
-// ======================= Debounce =======================
-bool debounceOpto(int pin, bool &lastRead, unsigned long &lastChange, bool &stableState) {
-  bool currentRead = (digitalRead(pin) == LOW); // LOW = active (optocoupler pulls low)
-  if (currentRead != lastRead) {
-    lastRead = currentRead;
-    lastChange = millis();
+// ======================= AC Detection =======================
+bool readOptoAC(int pin) {
+  int sum = 0;
+  const int samples = 10;
+  for (int i = 0; i < samples; i++) {
+    sum += digitalRead(pin); // LOW = active
+    delay(1);
   }
-  if (millis() - lastChange >= debounceTime) stableState = currentRead;
-  return stableState;
+  int avg = sum / samples;
+  return avg < 0.5;
 }
 
 // ======================= Buzzer Handling =======================
@@ -307,13 +298,17 @@ void handleBuzzer() {
 void activateEmergencyStop() {
   Serial.println("EMERGENCY STOP ACTIVATED");
   emergencyStopActive = true;
-  timerRunning = false;
-  pumpRunning = false;
+
+  // turn everything OFF
   digitalWrite(relayGF, HIGH);
   digitalWrite(relayFF, HIGH);
+  timerRunning = false;
+  pumpRunning = false;
   clearTimerLEDs();
   noPulseWhiteLED();
   noTone(buzzerPin);
+
+  // turn red LED ON to indicate emergency
   digitalWrite(redLED, HIGH);
 }
 
@@ -323,16 +318,17 @@ void handleButtons() {
   unsigned long now = millis();
   bool button15Pressed = (digitalRead(button15) == LOW);
 
-  // long hold for emergency stop (hold 10s -> 15s earlier you asked; using 10s here matches earlier code; change to 15000 if you want 15s)
+  // long hold for emergency stop (7 sec)
   if (button15Pressed) {
     if (button15PressStart == 0) button15PressStart = now;
-    else if (!emergencyStopActive && now - button15PressStart >= 10000) activateEmergencyStop();
+    else if (!emergencyStopActive && now - button15PressStart >= 7000) activateEmergencyStop();
   } else button15PressStart = 0;
 
-  if (emergencyStopActive) return;
-  if (now - lastPress < 200) return; // simple debounce for button press
+  if (emergencyStopActive) return;  // no further actions while emergency
 
-  // Timer selection buttons — store to EEPROM, update LED, and give short beep
+  if (now - lastPress < 200) return; // simple debounce
+
+  // Timer selection buttons
   if (digitalRead(button15) == LOW) {
     setTimerEEPROM(15);
     startBuzzer(100, 1, 1000);
@@ -374,9 +370,8 @@ void confirmPower(unsigned long now, bool acGF, bool acFF) {
 // ======================= Pump Timer =======================
 void runPumpTimer() {
   if (!timerRunning) return;
-  unsigned long elapsedMinutes = (millis() - timerStart) / 60000UL;
-  if (elapsedMinutes >= timerDuration) {
-    // timer expired -> turn pump off and relays off
+  unsigned long elapsedMillis = millis() - timerStart;
+  if (elapsedMillis >= timerDuration * 60000UL) {
     timerRunning = false;
     digitalWrite(relayGF, HIGH);
     digitalWrite(relayFF, HIGH);
@@ -391,6 +386,9 @@ void runPumpTimer() {
 
 // ======================= Reset =======================
 void resetSystem(const char* msg) {
+  static unsigned long lastResetMsg = 0;
+  unsigned long now = millis();
+
   digitalWrite(relayGF, HIGH);
   digitalWrite(relayFF, HIGH);
   timerRunning = false;
@@ -399,10 +397,14 @@ void resetSystem(const char* msg) {
   noPulseWhiteLED();
   powerPreviouslyDetected = false;
   powerConfirmed = false;
-  Serial.println(msg);
   noTone(buzzerPin);
   pumpPreviouslyRunning = false;
   relayOffCountdown = false;
+
+  if (now - lastResetMsg >= 1000) {
+    Serial.println(msg);
+    lastResetMsg = now;
+  }
 }
 
 // ======================= Alert (Both sources present) =======================
@@ -463,10 +465,9 @@ void handleMotorSafety(unsigned long now, bool acGF, bool acFF, bool motorOptoSt
       motorCheckInProgress = true;
       motorCheckStart = now;
     }
-    if (motorCheckInProgress && now - motorCheckStart >= 5000) { // 5s to detect motor
+    if (motorCheckInProgress && now - motorCheckStart >= 5000) {
       storedMotorOpto = motorOptoState;
       if (!storedMotorOpto) {
-        // motor didn't start -> turn relays off and wait
         relayOffCountdown = true;
         relayOffStartTime = now;
         digitalWrite(relayGF, HIGH);
@@ -515,7 +516,8 @@ void printStatus(unsigned long now, bool acGF, bool acFF, bool motorOptoState, b
   Serial.print(" | FF Relay: "); Serial.print(digitalRead(relayFF) == LOW ? "ON" : "OFF");
   Serial.print(" | optoGF: "); Serial.print(acGF ? "ON" : "OFF");
   Serial.print(" | optoFF: "); Serial.print(acFF ? "ON" : "OFF");
-  Serial.print(" | MotorOpto: "); Serial.println(motorOptoState ? "ON" : "OFF");
+  Serial.print(" | Motor Opto: "); Serial.print(motorOptoState ? "ON" : "OFF");
+  Serial.print(" | Emergency: "); Serial.println(emergencyStopActive ? "ACTIVE" : "NO");
 }
 
 // ======================= Melody =======================
@@ -545,15 +547,21 @@ void startRelayGFMelody() {
   melodyIndex = 0;
   playNextMelodyNote();
 }
+
 void startRelayFFMelody() {
   currentMelody = melodyFF;
   currentMelodyLength = sizeof(melodyFF) / sizeof(int);
   melodyIndex = 0;
   playNextMelodyNote();
 }
+
 void startDefaultMelody() {
   currentMelody = melodyDefault;
   currentMelodyLength = sizeof(melodyDefault) / sizeof(int);
   melodyIndex = 0;
   playNextMelodyNote();
 }
+
+
+
+
