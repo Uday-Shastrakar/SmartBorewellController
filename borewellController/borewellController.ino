@@ -96,7 +96,7 @@ void runPumpTimer();
 void resetSystem(const char* msg);
 void alertBuzzer();
 void clearTimerLEDs();
-void updateTimerLEDs(int minutes);
+void updateTimerLEDs(int minutes, bool running);
 void handleWhiteLEDPulse();
 void noPulseWhiteLED();
 void handleMotorSafety(unsigned long now, bool acGF, bool acFF, bool motorOptoState);
@@ -143,7 +143,7 @@ void setup() {
   byte storedTime = EEPROM.read(EEPROM_ADDR);
   if (storedTime == 0xFF) storedTime = 15;
   timerDuration = storedTime;
-  updateTimerLEDs(timerDuration);
+  updateTimerLEDs(timerDuration, timerRunning);
 
   Serial.print("Loaded Timer from EEPROM: ");
   Serial.println(timerDuration);
@@ -201,8 +201,7 @@ void loop() {
   bool desiredRelayGF = HIGH;
   bool desiredRelayFF = HIGH;
 
-  if (powerConfirmed && !relayOffCountdown && !pumpStoppedByTimer) { 
-    // only turn on relays if pump not stopped by timer
+  if (powerConfirmed && !relayOffCountdown && !pumpStoppedByTimer) {
     if (acGF && !acFF) desiredRelayGF = LOW;
     else if (!acGF && acFF) desiredRelayFF = LOW;
   }
@@ -250,7 +249,7 @@ void loop() {
   else noPulseWhiteLED();
 
   // Timer LED
-  updateTimerLEDs(timerDuration);
+  updateTimerLEDs(timerDuration, timerRunning);
 
   // Serial debug/status every 1 sec
   if (now - lastSerialUpdate >= serialInterval) {
@@ -319,41 +318,49 @@ void activateEmergencyStop() {
 void handleButtons() {
   static unsigned long lastPress = 0;
   unsigned long now = millis();
-  bool button15Pressed = (digitalRead(button15) == LOW);
 
-  // long hold for emergency stop (7 sec)
+  // Emergency Stop long hold (7 sec)
+  bool button15Pressed = (digitalRead(button15) == LOW);
   if (button15Pressed) {
     if (button15PressStart == 0) button15PressStart = now;
     else if (!emergencyStopActive && now - button15PressStart >= 7000) activateEmergencyStop();
   } else button15PressStart = 0;
 
-  if (emergencyStopActive) return;  // no further actions while emergency
+  if (emergencyStopActive) return; // skip while emergency
 
-  if (now - lastPress < 200) return; // simple debounce
+  // Debounce
+  if (now - lastPress < 200) return;
 
-  // Timer selection buttons
-  if (digitalRead(button15) == LOW) {
-    setTimerEEPROM(15);
-    pumpStoppedByTimer = false; // reset flag
-    startBuzzer(100, 1, 1000);
-    lastPress = now;
-  } else if (digitalRead(button30) == LOW) {
-    setTimerEEPROM(30);
+  int selectedTimer = 0;
+
+  if (digitalRead(button15) == LOW) selectedTimer = 15;
+  else if (digitalRead(button30) == LOW) selectedTimer = 30;
+  else if (digitalRead(button60) == LOW) selectedTimer = 60;
+
+  if (selectedTimer > 0) {
+    timerDuration = selectedTimer;
+    EEPROM.write(EEPROM_ADDR, selectedTimer);
+
+    // Start timer immediately
+    timerStart = now;
+    timerRunning = true;
     pumpStoppedByTimer = false;
-    startBuzzer(100, 1, 1000);
+
+    // Update timer LED
+    updateTimerLEDs(timerDuration, timerRunning);
+
+    startBuzzer(100, 1, 1000); // feedback beep
     lastPress = now;
-  } else if (digitalRead(button60) == LOW) {
-    setTimerEEPROM(60);
-    pumpStoppedByTimer = false;
-    startBuzzer(100, 1, 1000);
-    lastPress = now;
+
+    Serial.print("Timer set to: ");
+    Serial.println(selectedTimer);
   }
 }
 
 void setTimerEEPROM(int minutes) {
   timerDuration = minutes;
   EEPROM.write(EEPROM_ADDR, minutes);
-  updateTimerLEDs(minutes);
+  updateTimerLEDs(minutes, timerRunning);
 }
 
 // ======================= Power Confirmation =======================
@@ -376,20 +383,26 @@ void confirmPower(unsigned long now, bool acGF, bool acFF) {
 // ======================= Pump Timer =======================
 void runPumpTimer() {
   if (!timerRunning) return;
+
   unsigned long elapsedMillis = millis() - timerStart;
+
   if (elapsedMillis >= timerDuration * 60000UL) {
+    // Timer expired
     timerRunning = false;
     pumpRunning = false;
     relayIsOn = false;
-    pumpStoppedByTimer = true;  // pump stopped by timer
+    pumpStoppedByTimer = true;  
 
-    // turn relays OFF immediately
+    // Turn relays OFF immediately
     digitalWrite(relayGF, HIGH);
     digitalWrite(relayFF, HIGH);
 
+    // Turn off all LEDs
     clearTimerLEDs();
     noPulseWhiteLED();
-    startBuzzer(300, 3, 900); // expiry buzzer
+    
+    // Play expiry buzzer
+    startBuzzer(300, 3, 900);
     Serial.println("TIMER EXPIRED - Pump OFF");
   }
 }
@@ -447,8 +460,10 @@ void clearTimerLEDs() {
   digitalWrite(timerLED60, LOW);
 }
 
-void updateTimerLEDs(int minutes) {
+void updateTimerLEDs(int minutes, bool running) {
   clearTimerLEDs();
+  if (!running) return;
+
   if (minutes == 15) digitalWrite(timerLED15, HIGH);
   else if (minutes == 30) digitalWrite(timerLED30, HIGH);
   else if (minutes == 60) digitalWrite(timerLED60, HIGH);
@@ -533,8 +548,6 @@ void printStatus(unsigned long now, bool acGF, bool acFF, bool motorOptoState, b
   Serial.print(" | Emergency: "); Serial.println(emergencyStopActive ? "YES" : "NO");
 }
 
-
-
 // ======================= Melody =======================
 void handleMelody() {
   if (!melodyPlaying) return;
@@ -576,7 +589,3 @@ void startDefaultMelody() {
   melodyIndex = 0;
   playNextMelodyNote();
 }
-
-
-
-
