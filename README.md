@@ -1,107 +1,87 @@
-SmartBorewellController
+# Smart Borewell Controller
 
-Smart Borewell Pump Controller using Arduino Nano with USB-C. Features multi-floor AC voltage detection with PC817 optocouplers, relay-based pump control, motor safety, and timer selection (15/30/60 min) via push buttons. Includes LEDs and buzzer for status, alerts, and emergency stop. Safe, reliable, and easy to use for automated pump management.
+<p align="center">
+  <img src="images/project_overview.png" alt="Smart Borewell Controller" width="400">
+</p>
 
-<p align="center"> Automated borewell pump controller with multi-floor AC monitoring, motor protection, and timer control using Arduino Nano. </p>
-Project Description
+## Overview
+The <strong>Smart Borewell Controller</strong> is an automated pump control system designed to manage submersible pumps efficiently while ensuring safety and monitoring AC power conditions. It uses an Arduino Nano, relays, optocouplers, and timer-based logic to automatically control pump operation, prevent electrical hazards, and provide alerts for abnormal conditions.
 
-This project uses an Arduino Nano with USB Type-C to control a borewell pump safely and efficiently.
-It detects AC presence from multiple floors via PC817 optocouplers, manages pump switching through relays, and allows the user to run the pump on a selectable timer (15, 30, 60 minutes).
 
-The system includes motor safety detection, buzzer alerts, and an emergency stop feature for reliable and safe operation.
+## Features
+<ul>
+  <li>Automatic detection of <strong>GF (Ground Floor)</strong> and <strong>FF (First Floor)</strong> AC power.</li>
+  <li>Timer-based pump operation (15, 30, 60 minutes).</li>
+  <li>Emergency stop using a long-press button.</li>
+  <li>Motor running safety check using an optocoupler.</li>
+  <li>Alerts for abnormal conditions:
+    <ul>
+      <li>Both AC lines live</li>
+      <li>Motor not running after relay activation</li>
+      <li>Timer expired</li>
+    </ul>
+  </li>
+  <li>Visual indicators using LEDs:
+    <ul>
+      <li>Yellow LED → GF AC detected</li>
+      <li>Blue LED → FF AC detected</li>
+      <li>White LED → Pump running pulse</li>
+      <li>Red LED → Emergency / alert</li>
+    </ul>
+  </li>
+  <li>Buzzer alerts with customizable melodies.</li>
+  <li>EEPROM storage of last timer selection.</li>
+</ul>
 
-Features
+---
 
-AC voltage detection on Ground Floor and First Floor using PC817 optocouplers
+## Hardware Requirements
+<ul>
+  <li>Arduino Nano (C-Type)</li>
+  <li>2-Channel 10A Relay Module</li>
+  <li>2-Channel PC817 Optocoupler Module</li>
+  <li>3 AC detection channels using PC817</li>
+  <li>Resistors: 150KΩ, 1W (one per AC detection channel)</li>
+  <li>Bridge Rectifiers: DB107 or MB6M (one per AC detection channel)</li>
+  <li>Submersible Pump</li>
+</ul>
 
-Relay control for pump operation on both GF and FF lines
+---
 
-Timer selection (15 / 30 / 60 minutes) via push buttons
+## Circuit Overview
 
-Timer LEDs show active countdown
+### AC Detection Circuit (per channel)
 
-Audible alerts:
+AC Line (Live) → 150KΩ 1W resistor → Bridge Rectifier (DB107) → PC817 LED → AC Neutral
+PC817 Output → Arduino Input (active-low)
+PC817 Output LOW → AC present
 
-Short tone on button press
+PC817 Output HIGH → AC not present
 
-Pump ON buzzer notification
+Relay and Pump
+<ul> <li>RelayGF → D8 → Controls GF pump line</li> <li>RelayFF → D7 → Controls FF pump line</li> <li>Relays are active-low: LOW = ON, HIGH = OFF</li> </ul>
+LEDs
+<table> <tr><th>LED</th><th>Pin</th><th>Function</th></tr> <tr><td>Yellow</td><td>A0</td><td>GF AC detection</td></tr> <tr><td>Blue</td><td>12</td><td>FF AC detection</td></tr> <tr><td>White</td><td>13</td><td>Pump running pulse</td></tr> <tr><td>Red</td><td>A1</td><td>Emergency / Both AC live alert</td></tr> <tr><td>Timer LED15</td><td>9</td><td>15 min timer selected</td></tr> <tr><td>Timer LED30</td><td>10</td><td>30 min timer selected</td></tr> <tr><td>Timer LED60</td><td>11</td><td>60 min timer selected</td></tr> </table>
+Buttons
+<table> <tr><th>Button</th><th>Pin</th><th>Function</th></tr> <tr><td>Button15</td><td>4</td><td>Select 15-min timer / Emergency stop long press</td></tr> <tr><td>Button30</td><td>5</td><td>Select 30-min timer</td></tr> <tr><td>Button60</td><td>6</td><td>Select 60-min timer</td></tr> </table>
+Motor Detection
+PC817 detects whether the pump motor is running.
 
-Emergency stop buzzer alert
+Safety logic disables relays if motor does not start after 5 seconds.
 
-Motor safety: If motor AC is not detected, pump relay is turned off automatically
-
-Emergency Stop: Hold 15 min button for 10 sec → Pump OFF, red LED pulses, buzzer alert
-
-Safe isolation between mains AC and Arduino via optocouplers
-
-Compact design using Arduino Nano with USB-C
-
-Circuit Overview
-
-AC lines are monitored with PC817 optocouplers and high-value current limiting resistors.
-
-Relay modules switch the Live (Phase) supply to the borewell pump.
-
-Buttons allow user to select run-time.
-
-LEDs and buzzer provide visual and audible feedback.
-
-Motor safety optocoupler ensures the relay shuts off if motor is not detected running.
-
-Wiring Summary
-Component	Arduino Nano Pin	Purpose
-PC817 Optocouplers	D2 (FF), D3 (GF), A3 (Motor)	AC detection inputs
-Relay Module	D7 (FF Relay), D8 (GF Relay)	Pump control relays
-Push Buttons	D4 (15 min), D5 (30 min), D6 (60 min)	Timer selection
-Timer LEDs	D9 (15 min), D10 (30 min), D11 (60 min)	Show active timer
-Status LEDs	D12 (Blue = FF AC), A0 (Yellow = GF AC), A1 (Red = Alert), D13 (White = Pump ON)	System status
-Buzzer	A2	Alerts and notifications
-How to Use
-
-Connect all components as per the wiring summary.
-
-Upload the Arduino sketch to the Nano via USB-C.
-
-Ensure all AC connections are safely insulated.
-
-Press a button (15/30/60 min) → corresponding timer LED turns ON, pump starts.
-
-Pump will automatically switch OFF after timer expires (relay OFF, LED OFF).
-
-Pump ON triggers a buzzer notification and white LED indicator.
-
-If motor AC is not detected, relay shuts off to protect the system.
-
-For emergency stop → hold 15 min button for 10 seconds. Red LED pulses, buzzer sounds, pump turns OFF.
-
+Code Behavior
+<ul> <li><strong>AC Detection:</strong> Reads optocoupler states with averaging for stability.</li> <li><strong>Relay Control:</strong> Based on confirmed AC power and timer logic.</li> <li><strong>Timer Logic:</strong> Starts when pump runs, turns pump off on expiry.</li> <li><strong>Emergency Stop:</strong> Button 15 long press triggers immediate shutdown.</li> <li><strong>Motor Safety:</strong> Stops relays if motor not detected after 5 seconds.</li> <li><strong>Buzzer / Melody:</strong> Alerts for pump start, timer expiry, motor missing, and both AC live.</li> <li><strong>White LED Pulse:</strong> Indicates pump is running.</li> <li><strong>EEPROM Storage:</strong> Saves last timer selection.</li> <li><strong>Serial Monitor:</strong> Prints detailed status every 1 second for debugging.</li> </ul>
+Buzzer / Melody Behavior
+<table> <tr><th>Event</th><th>Melody / Beeps</th></tr> <tr><td>Pump Start</td><td>1 short beep</td></tr> <tr><td>Timer Expiry</td><td>3 short beeps</td></tr> <tr><td>Motor Missing</td><td>3 short beeps</td></tr> <tr><td>Both AC Live</td><td>Continuous 2kHz alert</td></tr> <tr><td>GF Relay Start</td><td>440, 554, 659 Hz</td></tr> <tr><td>FF Relay Start</td><td>523, 659, 784 Hz</td></tr> <tr><td>Default Melody</td><td>392, 392, 330, 330 Hz</td></tr> </table>
+Installation
+<ol> <li>Connect hardware according to the <strong>Circuit Overview</strong>.</li> <li>Upload <code>borewellController.ino</code> to Arduino Nano using Arduino IDE.</li> <li>Open Serial Monitor (9600 baud) for debug information.</li> <li>Verify LEDs and buzzer respond correctly before connecting the pump.</li> </ol>
 Safety Notes
-
-Always use high-value resistors (470kΩ or more, ≥1W) with optocouplers for mains AC detection.
-
-Keep Arduino and low-voltage electronics fully isolated from mains wiring.
-
-Ensure relays are rated for the pump load (voltage/current).
-
-Proper earthing and insulation is mandatory for safe operation.
-
-Screenshots / Images
-
-(Add wiring diagrams and actual setup photos here)
-
-License
-
-This project is licensed under the MIT License - see the LICENSE
- file for details.
-
+<ul> <li>Ensure all AC connections are <strong>insulated and safe</strong>.</li> <li>Use a <strong>fuse or circuit breaker</strong> on pump AC line.</li> <li>Resistors may get warm in prolonged AC operation; use 1W rating.</li> <li>Always test with low-power loads before connecting the pump.</li> </ul>
+Future Enhancements
+<ul> <li>LCD/OLED display for timer and status.</li> <li>IoT integration for remote monitoring.</li> <li>Adjustable motor check duration and timer.</li> <li>Battery backup with solar integration.</li> </ul>
 Author
+<p> <strong>Uday Shastrakar</strong><br> Email: <a href="mailto:uday.shastrakar@gmail.com">uday.shastrakar@gmail.com</a><br> GitHub: <a href="https://github.com/Uday-Shastrakar">https://github.com/Uday-Shastrakar</a><br> Location: Pune, Maharashtra, India </p>
+License
+This project is open-source and free to use.
 
-Uday Shastrakar, Software Engineer from Maharashtra, India
 
-GitHub Profile
-
-Email
-
-Support
-
-Contributions, issues, and feature requests are welcome!
-If you find this project useful, please give it a ⭐️ on GitHub!
