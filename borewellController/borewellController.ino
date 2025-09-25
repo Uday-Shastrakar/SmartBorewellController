@@ -30,6 +30,7 @@ bool timerRunning = false;
 
 bool pumpRunning = false;
 bool pumpPreviouslyRunning = false;
+bool pumpStoppedByTimer = false;      // flag for pump stopped by timer
 
 int whiteLEDBrightness = 0;
 int whiteLEDFadeAmount = 5;
@@ -200,7 +201,8 @@ void loop() {
   bool desiredRelayGF = HIGH;
   bool desiredRelayFF = HIGH;
 
-  if (powerConfirmed && !relayOffCountdown) {
+  if (powerConfirmed && !relayOffCountdown && !pumpStoppedByTimer) { 
+    // only turn on relays if pump not stopped by timer
     if (acGF && !acFF) desiredRelayGF = LOW;
     else if (!acGF && acFF) desiredRelayFF = LOW;
   }
@@ -234,6 +236,7 @@ void loop() {
   if (pumpRunning && !pumpPreviouslyRunning) {
     timerStart = now;
     timerRunning = true;
+    pumpStoppedByTimer = false; // reset flag
     startBuzzer(200, 1, 1200); // pump start beep
     alertBuzzerTriggered = true;
   }
@@ -331,14 +334,17 @@ void handleButtons() {
   // Timer selection buttons
   if (digitalRead(button15) == LOW) {
     setTimerEEPROM(15);
+    pumpStoppedByTimer = false; // reset flag
     startBuzzer(100, 1, 1000);
     lastPress = now;
   } else if (digitalRead(button30) == LOW) {
     setTimerEEPROM(30);
+    pumpStoppedByTimer = false;
     startBuzzer(100, 1, 1000);
     lastPress = now;
   } else if (digitalRead(button60) == LOW) {
     setTimerEEPROM(60);
+    pumpStoppedByTimer = false;
     startBuzzer(100, 1, 1000);
     lastPress = now;
   }
@@ -373,10 +379,14 @@ void runPumpTimer() {
   unsigned long elapsedMillis = millis() - timerStart;
   if (elapsedMillis >= timerDuration * 60000UL) {
     timerRunning = false;
-    digitalWrite(relayGF, HIGH);
-    digitalWrite(relayFF, HIGH);
     pumpRunning = false;
     relayIsOn = false;
+    pumpStoppedByTimer = true;  // pump stopped by timer
+
+    // turn relays OFF immediately
+    digitalWrite(relayGF, HIGH);
+    digitalWrite(relayFF, HIGH);
+
     clearTimerLEDs();
     noPulseWhiteLED();
     startBuzzer(300, 3, 900); // expiry buzzer
@@ -421,6 +431,7 @@ void alertBuzzer() {
   alertBuzzerTriggered = true;
   timerRunning = false;
   pumpRunning = false;
+  pumpStoppedByTimer = false;
   noPulseWhiteLED();
   clearTimerLEDs();
   powerPreviouslyDetected = false;
@@ -510,15 +521,19 @@ void printStatus(unsigned long now, bool acGF, bool acFF, bool motorOptoState, b
 
   Serial.print("Pump: "); Serial.print(pumpRunning ? "ON" : "OFF");
   Serial.print(" | Timer Running: "); Serial.print(timerRunning ? "YES" : "NO");
-  Serial.print(" | Time Remaining: "); Serial.print(timerRunning ? String(remainingMinutes)+":"+(remainingSeconds<10?"0":"")+String(remainingSeconds) : "0:00");
+  Serial.print(" | Time Remaining: "); Serial.print(remainingMinutes); Serial.print(":");
+  if (remainingSeconds < 10) Serial.print("0");
+  Serial.print(remainingSeconds);
   Serial.print(" | Selected Timer: "); Serial.print(timerDuration);
   Serial.print(" | GF Relay: "); Serial.print(digitalRead(relayGF) == LOW ? "ON" : "OFF");
   Serial.print(" | FF Relay: "); Serial.print(digitalRead(relayFF) == LOW ? "ON" : "OFF");
   Serial.print(" | optoGF: "); Serial.print(acGF ? "ON" : "OFF");
   Serial.print(" | optoFF: "); Serial.print(acFF ? "ON" : "OFF");
   Serial.print(" | Motor Opto: "); Serial.print(motorOptoState ? "ON" : "OFF");
-  Serial.print(" | Emergency: "); Serial.println(emergencyStopActive ? "ACTIVE" : "NO");
+  Serial.print(" | Emergency: "); Serial.println(emergencyStopActive ? "YES" : "NO");
 }
+
+
 
 // ======================= Melody =======================
 void handleMelody() {
